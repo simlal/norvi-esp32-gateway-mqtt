@@ -5,15 +5,12 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
+use esp_hal::time;
 use log::info;
 
-extern crate alloc;
+use espnow_mesh_temp_monitoring_rs::gateway_lib::greet::say_hi;
 
-#[embassy_executor::task(pool_size = 2)]
-async fn say_hi() -> () {
-    Timer::after(Duration::from_secs(5)).await;
-    info!("hi");
-}
+extern crate alloc;
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -46,7 +43,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(say_hi()).unwrap();
 
     loop {
-        info!("Hello world!");
+        info!("{} - Hello world!", time::now());
         Timer::after(Duration::from_millis(500)).await;
     }
 
