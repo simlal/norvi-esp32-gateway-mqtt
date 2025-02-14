@@ -52,6 +52,12 @@ embassy-time     = { version = "0.4.0", features = ["generic-queue-8"] }
 esp-hal-embassy  = { version = "0.6.0", features = ["esp32"] }
 static_cell      = { version = "2.1.0", features = ["nightly"] }
 esp-println = { version = "0.13.0", features = ["esp32", "log"] }
+ssd1306 = { git = "https://github.com/rust-embedded-community/ssd1306.git", rev = "f3a2f7aca421fbf3ddda45ecef0dfd1f0f12330e", features = [
+    "async",
+    "graphics"
+] }
+embedded-graphics = "0.8.1"
+embedded-hal-async = "1.0.0"
 
 [profile.dev]
 # Rust debug is too slow.
