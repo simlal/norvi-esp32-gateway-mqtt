@@ -1,23 +1,30 @@
 #![no_std]
 #![no_main]
 
+use alloc::string::ToString;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use embedded_graphics::mono_font::iso_8859_3::FONT_10X20;
+use embedded_graphics::prelude::Point;
+use embedded_graphics::text::Baseline;
+
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::peripherals::Peripherals;
 use esp_hal::{i2c, time};
 use log::info;
 
-use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{configure_text_style, display_message};
+use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
+    clear_line, configure_text_style, display_message, DisplayData, MqttCode, MsgLevelUnit,
+};
 use espnow_mesh_temp_monitoring_rs::gateway_lib::greet::log_init_complete;
 
 use ssd1306::{prelude::*, size::DisplaySize128x64, I2CDisplayInterface, Ssd1306Async};
 
 extern crate alloc;
 
-const HEAP_SIZE_KB: usize = 72;
+const HEAP_SIZE_KB: usize = 128;
+const OLED_ADDRESS: u8 = 0x3C;
+
 async fn allocate_heap() {
     esp_alloc::heap_allocator!(HEAP_SIZE_KB); // NOTE: Do I need a heap for wifi ? or else ?
 }
@@ -47,13 +54,30 @@ async fn main(_spawner: Spawner) {
         .into_async();
 
     // initialize the display
-    let interface = I2CDisplayInterface::new(i2c_module);
+    let interface = I2CDisplayInterface::new_custom_address(i2c_module, OLED_ADDRESS);
     let mut display = Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
     display.init().await.unwrap();
-    let text_style = configure_text_style(&FONT_10X20);
+    let text_style = configure_text_style();
 
-    display_message(&mut display, &text_style, "HELLO ESP!").await;
+    // We need base data to display
+    let mut wifi_status_display = MsgLevelUnit {
+        level: 50,
+        unit: "%",
+    };
+    let mut mqtt_status_display = MsgLevelUnit {
+        msg: "Mqtt Client",
+        level: MqttCode::from_u8(0),
+        unit: "",
+    };
+
+    let mut device_data = DisplayData {
+        wifi: wifi_status_display,
+        mqtt_client: mqtt_status_display,
+        device_time: &time::now().to_string(),
+    };
+
+    display_message(&mut display, &text_style, device_data).await;
 
     // WIFI setup
     //let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
@@ -70,8 +94,18 @@ async fn main(_spawner: Spawner) {
     // ********** init end ********** //
 
     loop {
-        info!("{} - Hello world!", time::now());
-        Timer::after(Duration::from_millis(500)).await;
+        // test refresh
+        info!("writing 25");
+        display.clear_buffer();
+        device_data.wifi.level = 25;
+        display_message(&mut display, &text_style, device_data).await;
+        Timer::after_secs(1).await;
+
+        info!("clearing and writing 100");
+        display.clear_buffer();
+        device_data.wifi.level = 100;
+        display_message(&mut display, &text_style, device_data).await;
+        Timer::after_secs(1).await;
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/v0.23.1/examples/src/bin
