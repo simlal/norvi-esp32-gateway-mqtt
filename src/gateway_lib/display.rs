@@ -25,7 +25,7 @@ pub enum MqttCode {
 }
 
 impl MqttCode {
-    fn to_str(&self) -> &'static str {
+    pub fn to_str(&self) -> &'static str {
         match self {
             MqttCode::Offline => "Offline",
             MqttCode::Connected => "Connected",
@@ -53,8 +53,12 @@ pub struct MsgLevelUnit {
 }
 
 impl MsgLevelUnit {
-    pub fn new(level: u8, unit: &'static str) -> MsgLevelUnit {
+    pub fn new(msg: &'static str, level: u8, unit: &'static str) -> MsgLevelUnit {
         MsgLevelUnit { msg, level, unit }
+    }
+
+    pub fn msg(&self) -> &'static str {
+        self.msg
     }
 
     pub fn level(&self) -> u8 {
@@ -77,7 +81,7 @@ impl MsgLevelUnit {
                 self.msg
             } else {
                 &self.msg[..15]
-            }
+            },
             self.level,
             if self.unit.len() <= 4 {
                 self.unit
@@ -96,7 +100,7 @@ pub struct DisplayData {
     pub device_time: &'static str,
 }
 
-pub fn configure_text_style() -> MonoTextStyle<'f, BinaryColor> {
+pub fn configure_text_style() -> MonoTextStyle<'static, BinaryColor> {
     MonoTextStyleBuilder::new()
         .font(&DISPLAY_FONT)
         .text_color(BinaryColor::On)
@@ -125,13 +129,13 @@ pub async fn display_message<D>(
 
     let mut message = data.wifi.to_string();
     // HACK: WILL NOT WORK FOR DIFF FONTS
-    Text::with_baseline(&message, Point::new(0, y), *text_style, baseline)
+    Text::with_baseline(&message, Point::new(0, y), *text_style, Baseline::Top)
         .draw(display)
         .unwrap();
 
     message = data.mqtt_client.to_string();
-    y = (*font_height * 2).try_into().unwrap() as i32;
-    Text::with_baseline(&message, Point::new(0, y), *text_style, baseline)
+    y = (*font_height * 2).try_into().unwrap();
+    Text::with_baseline(&message, Point::new(0, y), *text_style, Baseline::Top)
         .draw(display)
         .unwrap();
 

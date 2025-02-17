@@ -62,13 +62,14 @@ async fn main(_spawner: Spawner) {
 
     // We need base data to display
     let mut wifi_status_display = MsgLevelUnit {
+        msg: "Wifi",
         level: 50,
         unit: "%",
     };
     let mut mqtt_status_display = MsgLevelUnit {
         msg: "Mqtt Client",
-        level: MqttCode::from_u8(0),
-        unit: "",
+        level: 0,
+        unit: MqttCode::from_u8(0).to_str(),
     };
 
     let mut device_data = DisplayData {
