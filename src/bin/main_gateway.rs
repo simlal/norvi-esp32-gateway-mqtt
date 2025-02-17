@@ -1,20 +1,18 @@
 #![no_std]
 #![no_main]
 
-use alloc::string::ToString;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
-use embedded_graphics::prelude::Point;
-use embedded_graphics::text::Baseline;
+use embassy_time::Timer;
 
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
+use esp_hal::i2c;
 use esp_hal::peripherals::Peripherals;
-use esp_hal::{i2c, time};
+use esp_hal::time::Duration;
 use log::info;
 
 use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
-    clear_line, configure_text_style, display_message, DisplayData, MqttCode, MsgLevelUnit,
+    configure_text_style, display_message, DisplayData, MqttLevelUnit, WifiLevelUnit,
 };
 use espnow_mesh_temp_monitoring_rs::gateway_lib::greet::log_init_complete;
 
@@ -60,25 +58,21 @@ async fn main(_spawner: Spawner) {
     display.init().await.unwrap();
     let text_style = configure_text_style();
 
-    // We need base data to display
-    let mut wifi_status_display = MsgLevelUnit {
+    // Initialize the data to display
+    let wifi_status_display = WifiLevelUnit {
         msg: "Wifi",
         level: 50,
         unit: "%",
     };
-    let mut mqtt_status_display = MsgLevelUnit {
-        msg: "Mqtt Client",
-        level: 0,
-        unit: MqttCode::from_u8(0).to_str(),
-    };
-
+    let mqtt_status_display = MqttLevelUnit::new("MQTT client", 0);
+    let time_status_display = Duration::micros_at_least(0);
     let mut device_data = DisplayData {
         wifi: wifi_status_display,
         mqtt_client: mqtt_status_display,
-        device_time: &time::now().to_string(),
+        us_since_last_update: time_status_display,
     };
 
-    display_message(&mut display, &text_style, device_data).await;
+    display_message(&mut display, &text_style, &device_data).await;
 
     // WIFI setup
     //let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
@@ -96,17 +90,19 @@ async fn main(_spawner: Spawner) {
 
     loop {
         // test refresh
-        info!("writing 25");
+        info!("Mod wifi and mqtt");
         display.clear_buffer();
         device_data.wifi.level = 25;
-        display_message(&mut display, &text_style, device_data).await;
-        Timer::after_secs(1).await;
+        device_data.mqtt_client.update_status(1);
+        display_message(&mut display, &text_style, &device_data).await;
+        Timer::after_secs(2).await;
 
         info!("clearing and writing 100");
         display.clear_buffer();
         device_data.wifi.level = 100;
-        display_message(&mut display, &text_style, device_data).await;
-        Timer::after_secs(1).await;
+        device_data.mqtt_client.update_status(2);
+        display_message(&mut display, &text_style, &device_data).await;
+        Timer::after_secs(2).await;
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/v0.23.1/examples/src/bin

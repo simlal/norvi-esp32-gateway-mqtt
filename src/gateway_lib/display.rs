@@ -1,92 +1,41 @@
 use core::fmt::Write;
-use embassy_net::new;
 use embedded_graphics::{
-    mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder},
+    mono_font::{ascii, MonoFont, MonoTextStyle, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
     prelude::*,
     text::{Baseline, Text},
 };
 use embedded_hal_async::i2c::I2c as AsyncI2c;
-use heapless::{String, Vec};
+use esp_hal::time::Duration;
+use heapless::String;
 use ssd1306::prelude::DisplaySize128x64;
 use ssd1306::{mode::BufferedGraphicsModeAsync, prelude::*, Ssd1306Async};
 
 // USE SAME FONT FOR SIMPLIFICATION
-const DISPLAY_FONT: embedded_graphics::mono_font::MonoFont =
-    embedded_graphics::mono_font::ascii::FONT_5X8;
-const DISPLAY_WIDTH: usize = 128;
+const DISPLAY_FONT: MonoFont = ascii::FONT_5X8;
+//const DISPLAY_WIDTH: usize = 128;
 
-pub enum MqttCode {
-    Offline,
-    Connected,
-    Disconnected,
-    Published,
-    Err,
-}
+pub trait LevelUnit {
+    fn msg(&self) -> &'static str;
+    fn level(&self) -> u8;
+    fn unit(&self) -> &'static str;
 
-impl MqttCode {
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            MqttCode::Offline => "Offline",
-            MqttCode::Connected => "Connected",
-            MqttCode::Disconnected => "Disconnected",
-            MqttCode::Published => "Published",
-            MqttCode::Err => "Err",
-        }
-    }
-
-    pub fn from_u8(value: u8) -> Self {
-        match value {
-            0 => MqttCode::Offline,
-            1 => MqttCode::Connected,
-            2 => MqttCode::Disconnected,
-            3 => MqttCode::Published,
-            _ => MqttCode::Err,
-        }
-    }
-}
-
-pub struct MsgLevelUnit {
-    pub msg: &'static str,
-    pub level: u8,
-    pub unit: &'static str,
-}
-
-impl MsgLevelUnit {
-    pub fn new(msg: &'static str, level: u8, unit: &'static str) -> MsgLevelUnit {
-        MsgLevelUnit { msg, level, unit }
-    }
-
-    pub fn msg(&self) -> &'static str {
-        self.msg
-    }
-
-    pub fn level(&self) -> u8 {
-        self.level
-    }
-    pub fn set_level(&mut self, level: u8) {
-        self.level = level;
-    }
-
-    pub fn unit(&self) -> &'static str {
-        self.unit
-    }
     // Max of 16 + 4 + 4 chars for level and unit
-    pub fn to_string(&self) -> String<8> {
-        let mut s = String::<8>::new();
+    fn to_string(&self) -> String<24> {
+        let mut s = String::<24>::new();
         write!(
             &mut s,
             "{:15} {:3} {:4}",
-            if self.msg.len() <= 15 {
-                self.msg
+            if self.msg().len() <= 15 {
+                self.msg()
             } else {
-                &self.msg[..15]
+                &self.msg()[..15]
             },
-            self.level,
-            if self.unit.len() <= 4 {
-                self.unit
+            self.level(),
+            if self.unit().len() <= 4 {
+                self.unit()
             } else {
-                &self.unit[..4]
+                &self.unit()[..4]
             }
         )
         .unwrap();
@@ -94,10 +43,111 @@ impl MsgLevelUnit {
     }
 }
 
+pub struct WifiLevelUnit {
+    pub msg: &'static str,
+    pub level: u8,
+    pub unit: &'static str,
+}
+
+impl WifiLevelUnit {
+    pub fn new(msg: &'static str, level: u8, unit: &'static str) -> WifiLevelUnit {
+        WifiLevelUnit { msg, level, unit }
+    }
+    pub fn set_level(&mut self, level: u8) {
+        self.level = level;
+    }
+}
+
+impl LevelUnit for WifiLevelUnit {
+    fn msg(&self) -> &'static str {
+        self.msg
+    }
+    fn level(&self) -> u8 {
+        self.level
+    }
+    fn unit(&self) -> &'static str {
+        self.unit
+    }
+}
+
+pub enum MqttStatus {
+    Offline,
+    Connected,
+    Disconnected,
+    Published,
+    Err,
+}
+
+impl MqttStatus {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            MqttStatus::Offline => "Offline",
+            MqttStatus::Connected => "Connected",
+            MqttStatus::Disconnected => "Disconnected",
+            MqttStatus::Published => "Published",
+            MqttStatus::Err => "Error",
+        }
+    }
+
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => MqttStatus::Offline,
+            1 => MqttStatus::Connected,
+            2 => MqttStatus::Disconnected,
+            3 => MqttStatus::Published,
+            _ => MqttStatus::Err,
+        }
+    }
+}
+
+pub struct MqttLevelUnit {
+    pub msg: &'static str,
+    pub level: u8,
+    pub unit: MqttStatus,
+}
+
+impl MqttLevelUnit {
+    pub fn new(msg: &'static str, level: u8) -> MqttLevelUnit {
+        MqttLevelUnit {
+            msg,
+            level,
+            unit: MqttStatus::from_u8(level),
+        }
+    }
+    pub fn update_status(&mut self, level: u8) {
+        self.level = level;
+        self.unit = MqttStatus::from_u8(level);
+    }
+}
+
+impl LevelUnit for MqttLevelUnit {
+    fn msg(&self) -> &'static str {
+        self.msg
+    }
+    fn level(&self) -> u8 {
+        self.level
+    }
+    fn unit(&self) -> &'static str {
+        self.unit.to_str()
+    }
+}
+
+pub trait DurationExt {
+    fn to_string(&self) -> String<20>;
+}
+
+impl DurationExt for Duration {
+    fn to_string(&self) -> String<20> {
+        let mut s = String::<20>::new();
+        write!(&mut s, "{}", self).unwrap();
+        s
+    }
+}
+
 pub struct DisplayData {
-    pub wifi: MsgLevelUnit,
-    pub mqtt_client: MsgLevelUnit,
-    pub device_time: &'static str,
+    pub wifi: WifiLevelUnit,
+    pub mqtt_client: MqttLevelUnit,
+    pub us_since_last_update: Duration,
 }
 
 pub fn configure_text_style() -> MonoTextStyle<'static, BinaryColor> {
@@ -114,30 +164,41 @@ pub async fn display_message<D>(
         BufferedGraphicsModeAsync<DisplaySize128x64>,
     >,
     text_style: &MonoTextStyle<'_, BinaryColor>,
-    data: DisplayData,
+    data: &DisplayData,
 ) where
     D: AsyncI2c,
 {
     // Display time first
-    Text::with_baseline(data.device_time, Point::zero(), *text_style, Baseline::Top)
+    let time_str = data.us_since_last_update.to_string();
+    Text::with_baseline(&time_str, Point::zero(), *text_style, Baseline::Top)
         .draw(display)
         .unwrap();
 
     // Skip lines and display other data
     let font_height = &DISPLAY_FONT.character_size.height;
-    let mut y: i32 = (*font_height).try_into().unwrap();
+    let mut y: i32 = (*font_height * 2).try_into().unwrap();
 
-    let mut message = data.wifi.to_string();
+    let wifi_status_str = data.wifi.to_string();
     // HACK: WILL NOT WORK FOR DIFF FONTS
-    Text::with_baseline(&message, Point::new(0, y), *text_style, Baseline::Top)
-        .draw(display)
-        .unwrap();
+    Text::with_baseline(
+        &wifi_status_str,
+        Point::new(0, y),
+        *text_style,
+        Baseline::Top,
+    )
+    .draw(display)
+    .unwrap();
 
-    message = data.mqtt_client.to_string();
-    y = (*font_height * 2).try_into().unwrap();
-    Text::with_baseline(&message, Point::new(0, y), *text_style, Baseline::Top)
-        .draw(display)
-        .unwrap();
+    let mqtt_status_str = data.mqtt_client.to_string();
+    y = (*font_height * 4).try_into().unwrap();
+    Text::with_baseline(
+        &mqtt_status_str,
+        Point::new(0, y),
+        *text_style,
+        Baseline::Top,
+    )
+    .draw(display)
+    .unwrap();
 
     display.flush().await.unwrap();
 }
