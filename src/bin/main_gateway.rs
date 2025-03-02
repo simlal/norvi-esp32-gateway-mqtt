@@ -61,7 +61,7 @@ async fn main(_spawner: Spawner) {
     // Initialize the data to display
     let wifi_status_display = WifiLevelUnit {
         msg: "Wifi",
-        level: 50,
+        level: 0,
         unit: "%",
     };
     let mqtt_status_display = MqttLevelUnit::new("MQTT client", 0);
