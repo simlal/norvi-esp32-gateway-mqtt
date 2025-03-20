@@ -18,3 +18,5 @@ Progress report for IFT-744 IoT Project
 - Started working on the Wifi implementation for the ESP32 Gateway
 - Able to read the env vars for SSID and password
 - Used tasks to poll the connection to wifi
+- Made RSSI polling with a bit of a hack within the connection task
+- Updated the RSSI to the device display
