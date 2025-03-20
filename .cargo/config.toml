@@ -2,12 +2,11 @@
 runner = "espflash flash --monitor"
 
 [env]
-ESP_LOG="INFO"
+ESP_LOG = "DEBUG"
+SSID = "bike_maniacs"
 
 [build]
-rustflags = [
-  "-C", "link-arg=-nostartfiles",
-]
+rustflags = ["-C", "link-arg=-nostartfiles"]
 
 target = "xtensa-esp32-none-elf"
 

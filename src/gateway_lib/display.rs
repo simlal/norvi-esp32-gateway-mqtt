@@ -12,6 +12,8 @@ use heapless::String;
 use ssd1306::prelude::DisplaySize128x64;
 use ssd1306::{mode::BufferedGraphicsModeAsync, prelude::*, Ssd1306Async};
 
+use crate::common::wifi::{approx_rssi_to_percent, CURRENT_RSSI};
+
 // USE SAME FONT FOR SIMPLIFICATION
 const DISPLAY_FONT: MonoFont = ascii::FONT_5X8;
 //const DISPLAY_WIDTH: usize = 128;
@@ -201,7 +203,7 @@ pub async fn display_message<D>(
     let mut y: i32 = (*font_height * 2).try_into().unwrap();
 
     // Format and update device data
-    dev_data.perform_time_update();
+    dev_data.wifi.level = approx_rssi_to_percent(&CURRENT_RSSI);
     let wifi_status_str = dev_data.wifi.to_string();
     // HACK: WILL NOT WORK FOR DIFF FONTS
     Text::with_baseline(
