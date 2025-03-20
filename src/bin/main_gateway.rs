@@ -8,34 +8,36 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::i2c;
 use esp_hal::peripherals::Peripherals;
-use esp_hal::time::Duration;
 use log::info;
 
 use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
     configure_text_style, display_message, DisplayData, MqttLevelUnit, WifiLevelUnit,
 };
-use espnow_mesh_temp_monitoring_rs::gateway_lib::greet::log_init_complete;
 
 use ssd1306::{prelude::*, size::DisplaySize128x64, I2CDisplayInterface, Ssd1306Async};
 
 extern crate alloc;
 
-const HEAP_SIZE_KB: usize = 128;
+// NOTE: HOW MUCH HEAP REQ?
+const HEAP_SIZE: usize = 72 * 1024;
 const OLED_ADDRESS: u8 = 0x3C;
 
 async fn allocate_heap() {
-    esp_alloc::heap_allocator!(HEAP_SIZE_KB); // NOTE: Do I need a heap for wifi ? or else ?
+    esp_alloc::heap_allocator!(HEAP_SIZE);
 }
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
-    // ********** Hardware init and wifi ********** //
+    // ********** Hardware init and heap ********** //
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals: Peripherals = esp_hal::init(config);
+    allocate_heap().await;
 
     esp_println::logger::init_logger_from_env();
-
-    allocate_heap().await;
+    info!(
+        "Initialized hardware and allocated {} KB of pre-defined heap",
+        HEAP_SIZE / 1024
+    );
 
     // Embassy init
     let timer0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1);
@@ -51,7 +53,7 @@ async fn main(_spawner: Spawner) {
         .with_scl(peripherals.GPIO17)
         .into_async();
 
-    // initialize the display
+    // Initialize I2C for display
     let interface = I2CDisplayInterface::new_custom_address(i2c_module, OLED_ADDRESS);
     let mut display = Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
@@ -65,14 +67,10 @@ async fn main(_spawner: Spawner) {
         unit: "%",
     };
     let mqtt_status_display = MqttLevelUnit::new("MQTT client", 0);
-    let time_status_display = Duration::micros_at_least(0);
-    let mut device_data = DisplayData {
-        wifi: wifi_status_display,
-        mqtt_client: mqtt_status_display,
-        us_since_last_update: time_status_display,
-    };
+    let mut device_data = DisplayData::new(wifi_status_display, mqtt_status_display);
+    display_message(&mut display, &text_style, &mut device_data).await;
 
-    display_message(&mut display, &text_style, &device_data).await;
+    info!("Display with basic device data init");
 
     // WIFI setup
     //let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
@@ -84,26 +82,24 @@ async fn main(_spawner: Spawner) {
     //.unwrap();
     //info!("Wifi configured!");
 
-    log_init_complete().await;
+    info!("All configs init and setup completed!");
 
     // ********** init end ********** //
 
-    loop {
-        // test refresh
-        info!("Mod wifi and mqtt");
-        display.clear_buffer();
-        device_data.wifi.level = 25;
-        device_data.mqtt_client.update_status(1);
-        display_message(&mut display, &text_style, &device_data).await;
-        Timer::after_secs(2).await;
+    // test refresh of display
+    info!("Mod wifi and mqtt");
+    display.clear_buffer();
+    device_data.wifi.level = 25;
+    device_data.mqtt_client.update_status(1);
+    display_message(&mut display, &text_style, &mut device_data).await;
+    Timer::after_secs(3).await;
 
-        info!("clearing and writing 100");
-        display.clear_buffer();
-        device_data.wifi.level = 100;
-        device_data.mqtt_client.update_status(2);
-        display_message(&mut display, &text_style, &device_data).await;
-        Timer::after_secs(2).await;
-    }
+    info!("clearing and writing 100");
+    display.clear_buffer();
+    device_data.wifi.level = 100;
+    device_data.mqtt_client.update_status(2);
+    display_message(&mut display, &text_style, &mut device_data).await;
+    Timer::after_secs(2).await;
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/v0.23.1/examples/src/bin
 }

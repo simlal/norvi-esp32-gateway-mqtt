@@ -6,7 +6,8 @@ use embedded_graphics::{
     text::{Baseline, Text},
 };
 use embedded_hal_async::i2c::I2c as AsyncI2c;
-use esp_hal::time::Duration;
+// use esp_hal::time::{Duration, Instant};
+use embassy_time::{Duration, Instant};
 use heapless::String;
 use ssd1306::prelude::DisplaySize128x64;
 use ssd1306::{mode::BufferedGraphicsModeAsync, prelude::*, Ssd1306Async};
@@ -133,13 +134,14 @@ impl LevelUnit for MqttLevelUnit {
 }
 
 pub trait DurationExt {
-    fn to_string(&self) -> String<20>;
+    fn to_string_ms(&self) -> String<20>;
 }
 
 impl DurationExt for Duration {
-    fn to_string(&self) -> String<20> {
+    fn to_string_ms(&self) -> String<20> {
+        let duration_as_secs = self.as_millis() as f64 / 1000.0;
         let mut s = String::<20>::new();
-        write!(&mut s, "{}", self).unwrap();
+        write!(&mut s, "{} s", duration_as_secs).unwrap();
         s
     }
 }
@@ -147,7 +149,26 @@ impl DurationExt for Duration {
 pub struct DisplayData {
     pub wifi: WifiLevelUnit,
     pub mqtt_client: MqttLevelUnit,
-    pub us_since_last_update: Duration,
+    pub last_update_time: Instant,
+    pub last_update_duration: Duration,
+}
+
+impl DisplayData {
+    pub fn new(wifi: WifiLevelUnit, mqtt_client: MqttLevelUnit) -> DisplayData {
+        DisplayData {
+            wifi,
+            mqtt_client,
+            last_update_time: Instant::now(),
+            last_update_duration: Duration::from_secs(0),
+        }
+    }
+    // FIX: TIME UPDATE WRONG
+    fn perform_time_update(&mut self) {
+        self.last_update_duration = Instant::now()
+            .checked_duration_since(self.last_update_time)
+            .unwrap_or(Duration::from_secs(0));
+        self.last_update_time = Instant::now();
+    }
 }
 
 pub fn configure_text_style() -> MonoTextStyle<'static, BinaryColor> {
@@ -164,12 +185,13 @@ pub async fn display_message<D>(
         BufferedGraphicsModeAsync<DisplaySize128x64>,
     >,
     text_style: &MonoTextStyle<'_, BinaryColor>,
-    data: &DisplayData,
+    dev_data: &mut DisplayData,
 ) where
     D: AsyncI2c,
 {
     // Display time first
-    let time_str = data.us_since_last_update.to_string();
+    dev_data.perform_time_update();
+    let time_str = dev_data.last_update_duration.to_string_ms();
     Text::with_baseline(&time_str, Point::zero(), *text_style, Baseline::Top)
         .draw(display)
         .unwrap();
@@ -178,7 +200,9 @@ pub async fn display_message<D>(
     let font_height = &DISPLAY_FONT.character_size.height;
     let mut y: i32 = (*font_height * 2).try_into().unwrap();
 
-    let wifi_status_str = data.wifi.to_string();
+    // Format and update device data
+    dev_data.perform_time_update();
+    let wifi_status_str = dev_data.wifi.to_string();
     // HACK: WILL NOT WORK FOR DIFF FONTS
     Text::with_baseline(
         &wifi_status_str,
@@ -189,7 +213,7 @@ pub async fn display_message<D>(
     .draw(display)
     .unwrap();
 
-    let mqtt_status_str = data.mqtt_client.to_string();
+    let mqtt_status_str = dev_data.mqtt_client.to_string();
     y = (*font_height * 4).try_into().unwrap();
     Text::with_baseline(
         &mqtt_status_str,
@@ -202,27 +226,3 @@ pub async fn display_message<D>(
 
     display.flush().await.unwrap();
 }
-
-//pub async fn clear_line<D>(
-//    display: &mut Ssd1306Async<
-//        I2CInterface<D>,
-//        DisplaySize128x64,
-//        BufferedGraphicsModeAsync<DisplaySize128x64>,
-//    >,
-//    y: u8, // y-coordinate of the line to clear
-//) where
-//    D: AsyncI2c,
-//{
-//    // HACK: heapless does not allow dynamic size when alloc
-//    let buffer = Vec::<u8, DISPLAY_WIDTH>::new();
-//
-//    let upper_left = (0, y); // Starting at (0, y)
-//    let lower_right = (DISPLAY_WIDTH as u8 - 1, y); // Full width, same y-coordinate
-//
-//    display
-//        .bounded_draw(&buffer, DISPLAY_WIDTH, upper_left, lower_right)
-//        .await
-//        .unwrap();
-//
-//    display.flush().await.unwrap(); // Ensure the changes are sent to the display
-//}
