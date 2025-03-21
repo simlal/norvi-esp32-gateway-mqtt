@@ -3,8 +3,7 @@ use embassy_time::{Duration, Timer};
 use log::{debug, info, warn};
 
 use esp_wifi::wifi::{
-    ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent, WifiStaDevice,
-    WifiState,
+    ClientConfiguration, Configuration, WifiController, WifiDevice, WifiStaDevice, WifiState,
 };
 
 use core::sync::atomic::{AtomicI8, Ordering};
@@ -48,10 +47,14 @@ pub async fn connection_task(
         'poll_rssi_when_conn: while esp_wifi::wifi::wifi_state() == WifiState::StaConnected {
             if let Ok(scan_res) = controller.scan_n::<10>() {
                 for ap in scan_res.0 {
+                    // HACK: N=10 is arbitrary, in my case I scan current conn SSID twice
                     if ap.ssid == ssid {
                         let rssi = ap.signal_strength;
                         CURRENT_RSSI.store(rssi, Ordering::Relaxed);
-                        info!("Updated RSSI for '{}': {} dBm", ssid, rssi);
+                        info!(
+                            "Updated RSSI for '{}': {} dBm, channel={}",
+                            ssid, rssi, ap.channel
+                        );
                     }
                 }
             }

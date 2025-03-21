@@ -1,9 +1,13 @@
 #![no_std]
 #![no_main]
+use core::sync::atomic::Ordering;
+use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::BinaryColor};
 
 use embassy_executor::Spawner;
 use embassy_net::{Config, DhcpConfig, StackResources};
 use embassy_time::Timer;
+use esp_hal::i2c::master::I2c;
+use esp_hal::Async;
 
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
@@ -16,10 +20,17 @@ use espnow_mesh_temp_monitoring_rs::common::wifi::{
     connection_task, get_ssid_password, net_task, wait_for_connection,
 };
 use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
-    configure_text_style, display_message, DisplayData, MqttLevelUnit, WifiLevelUnit,
+    configure_text_style, display_update_task, DisplayData, MqttLevelUnit, WifiLevelUnit,
+    CURRENT_MQTT,
+};
+use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::access_website;
+
+use ssd1306::{
+    mode::BufferedGraphicsModeAsync, prelude::*, size::DisplaySize128x64, I2CDisplayInterface,
+    Ssd1306Async,
 };
 
-use ssd1306::{prelude::*, size::DisplaySize128x64, I2CDisplayInterface, Ssd1306Async};
+// type I2C = embedded_hal::i2c::I2c;
 
 // ****** Arena type heap ****** //
 extern crate alloc;
@@ -68,10 +79,24 @@ async fn main(spawner: Spawner) {
         .into_async();
 
     let interface = I2CDisplayInterface::new_custom_address(i2c_module, OLED_ADDRESS);
-    let mut display = Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
-        .into_buffered_graphics_mode();
+    // let mut display: Ssd1306Async<
+    //     I2CInterface<I2c<'static, Async>>,
+    //     DisplaySize128x64,
+    //     BufferedGraphicsModeAsync<DisplaySize128x64>,
+    // > = Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+    //     .into_buffered_graphics_mode();
+
+    let display = mk_static!(
+        Ssd1306Async<
+            I2CInterface<I2c<'static, Async>>,
+            DisplaySize128x64,
+            BufferedGraphicsModeAsync<DisplaySize128x64>,
+        >,
+        Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+            .into_buffered_graphics_mode()
+    );
     display.init().await.unwrap();
-    let text_style = configure_text_style();
+    static TEXT_STYLE: MonoTextStyle<'static, BinaryColor> = configure_text_style();
 
     // ********** DisplayData init ********** //
     let wifi_status_display = WifiLevelUnit {
@@ -79,10 +104,16 @@ async fn main(spawner: Spawner) {
         level: 0,
         unit: "%",
     };
-    let mqtt_status_display = MqttLevelUnit::new("MQTT client", 0);
-    let mut device_data = DisplayData::new(wifi_status_display, mqtt_status_display);
-    info!("Display with basic device data init");
-    display_message(&mut display, &text_style, &mut device_data).await;
+    let mqtt_status_display =
+        MqttLevelUnit::new("MQTT client", CURRENT_MQTT.load(Ordering::Relaxed));
+    let device_data = mk_static!(
+        DisplayData,
+        DisplayData::new(wifi_status_display, mqtt_status_display)
+    );
+    info!("Initialized device task");
+    spawner
+        .spawn(display_update_task(display, &TEXT_STYLE, device_data))
+        .unwrap();
 
     // ********** Wifi init ********** //
     // Wifi creds from both config and compile args
@@ -131,16 +162,18 @@ async fn main(spawner: Spawner) {
 
     info!("All configs init and setup completed!");
     // ********** init end ********** //
-    //
+
+    // GET REQ to embassy.dev before test loop
+    // access_website(stack, tls_seed).await;
+
     loop {
-        display.clear_buffer();
-        device_data.mqtt_client.update_status(1);
-        display_message(&mut display, &text_style, &mut device_data).await;
+        info!("waiting 5s, test update atomic mqtt");
+        CURRENT_MQTT.store(1, Ordering::Relaxed);
         Timer::after_secs(5).await;
 
-        display.clear_buffer();
-        device_data.mqtt_client.update_status(2);
-        display_message(&mut display, &text_style, &mut device_data).await;
+        info!("waiting 3s, other mqtt update");
+
+        CURRENT_MQTT.store(2, Ordering::Relaxed);
         Timer::after_secs(3).await;
     }
 }
