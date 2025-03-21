@@ -23,7 +23,7 @@ use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
     configure_text_style, display_update_task, DisplayData, MqttLevelUnit, WifiLevelUnit,
     CURRENT_MQTT,
 };
-use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::access_website;
+use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::make_get_request;
 
 use ssd1306::{
     mode::BufferedGraphicsModeAsync, prelude::*, size::DisplaySize128x64, I2CDisplayInterface,
@@ -110,7 +110,7 @@ async fn main(spawner: Spawner) {
         DisplayData,
         DisplayData::new(wifi_status_display, mqtt_status_display)
     );
-    info!("Initialized device task");
+    info!("Initialized display device, spawning task with ~5s refresh.");
     spawner
         .spawn(display_update_task(display, &TEXT_STYLE, device_data))
         .unwrap();
@@ -164,9 +164,10 @@ async fn main(spawner: Spawner) {
     // ********** init end ********** //
 
     // GET REQ to embassy.dev before test loop
-    // access_website(stack, tls_seed).await;
+    let url = "https://jsonplaceholder.typicode.com/posts/1";
+    make_get_request(stack, tls_seed, url).await;
 
-    loop {
+    for _ in 0..2 {
         info!("waiting 5s, test update atomic mqtt");
         CURRENT_MQTT.store(1, Ordering::Relaxed);
         Timer::after_secs(5).await;
