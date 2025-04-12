@@ -66,4 +66,5 @@ pub async fn make_get_request(stack: Stack<'_>, tls_seed: u64, url: &str) {
         Ok(content) => info!("{}", content),
         Err(e) => error!("Response wasn't valid UTF-8: {:?}", e),
     }
+    // TODO: PARSE THE RESPONSE AND RETURN AS JSON
 }
