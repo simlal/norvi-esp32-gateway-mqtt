@@ -6,7 +6,7 @@ use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::BinaryColor};
 
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, Config, DhcpConfig, StackResources};
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Ticker};
 use esp_hal::i2c::master::I2c;
 use esp_hal::Async;
 
@@ -34,7 +34,8 @@ use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
     configure_text_style, display_update_task, DisplayData, MqttLevelUnit, WifiLevelUnit,
     CURRENT_MQTT,
 };
-use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::make_get_request;
+// TEST: Test the http requests call with this module
+// use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::make_get_request;
 
 use ssd1306::{
     mode::BufferedGraphicsModeAsync, prelude::*, size::DisplaySize128x64, I2CDisplayInterface,
