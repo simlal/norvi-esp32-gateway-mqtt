@@ -30,9 +30,12 @@ use espnow_mesh_temp_monitoring_rs::common::wifi::{
     approx_rssi_to_percent, connection_task, get_ssid_password, net_task, wait_for_connection,
     CURRENT_RSSI,
 };
+
+use espnow_mesh_temp_monitoring_rs::common::temperature::read_temperature_hack;
+
 use espnow_mesh_temp_monitoring_rs::gateway_lib::display::{
-    configure_text_style, display_update_task, DisplayData, MqttLevelUnit, WifiLevelUnit,
-    CURRENT_MQTT,
+    configure_text_style, display_update_task, DisplayData, MqttLevelUnit, TemperatureLevelUnit,
+    WifiLevelUnit, CURRENT_MQTT,
 };
 // TEST: Test the http requests call with this module
 // use espnow_mesh_temp_monitoring_rs::gateway_lib::requests::make_get_request;
@@ -47,6 +50,7 @@ extern crate alloc;
 // NOTE: HOW MUCH HEAP REQ?
 const HEAP_SIZE: usize = 72 * 1024;
 const OLED_ADDRESS: u8 = 0x3C;
+const ADS1115_ADDR: u8 = 0x48;
 
 fn allocate_heap() {
     esp_alloc::heap_allocator!(HEAP_SIZE);
@@ -60,6 +64,68 @@ macro_rules! mk_static {
         let x = STATIC_CELL.uninit().write(($val));
         x
     }};
+}
+async fn scan_i2c_bus() {
+    // Get a new peripherals instance
+    let peripherals = unsafe { esp_hal::peripherals::Peripherals::steal() };
+    let i2c_config = i2c::master::Config::default();
+
+    // Create a temporary I2C instance for scanning
+    let mut i2c = i2c::master::I2c::new(peripherals.I2C1, i2c_config)
+        .unwrap()
+        .with_sda(peripherals.GPIO16)
+        .with_scl(peripherals.GPIO17)
+        .into_async();
+
+    info!("Scanning I2C bus...");
+    let mut devices_found = false;
+
+    for addr in 0..=127u8 {
+        if addr == OLED_ADDRESS {
+            // Skip the OLED address since we know it's there
+            continue;
+        }
+
+        let mut data = [0u8; 1];
+        if let Ok(_) = i2c.write_read(addr, &[0], &mut data).await {
+            info!("Found I2C device at address: 0x{:02X}", addr);
+            devices_found = true;
+
+            if addr == ADS1115_ADDR {
+                info!("Found ADS1115 at expected address 0x{:02X}", addr);
+            }
+        }
+    }
+
+    if !devices_found {
+        error!("No I2C devices found besides OLED! Check connections.");
+    }
+}
+
+async fn scan_i2c(i2c: &mut I2c<'_, Async>) {
+    info!("Scanning I2C bus...");
+
+    let mut devices_found = false;
+
+    // Use the async API to scan for devices
+    for addr in 0..=127u8 {
+        let write_data = [0u8; 1];
+        let mut read_data = [0u8; 1];
+        // Just try to read a byte from each address
+        match i2c.write_read(addr, &write_data, &mut read_data).await {
+            Ok(_) => {
+                info!("Found I2C device at address: 0x{:02X}", addr);
+                devices_found = true;
+            }
+            Err(_) => {
+                // No device at this address, continue to the next
+            }
+        }
+    }
+
+    if !devices_found {
+        error!("No I2C devices found on the bus! Check your connections.");
+    }
 }
 
 #[esp_hal_embassy::main]
@@ -81,7 +147,7 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     // ********** I2C For Display ********** //
-    //let mut gpio_16 = gpio::Output::new(peripherals.GPIO16, gpio::Level::Low);
+    scan_i2c_bus().await;
     let i2c_module = i2c::master::I2c::new(peripherals.I2C0, i2c::master::Config::default())
         .unwrap()
         .with_sda(peripherals.GPIO16)
@@ -89,12 +155,6 @@ async fn main(spawner: Spawner) {
         .into_async();
 
     let interface = I2CDisplayInterface::new_custom_address(i2c_module, OLED_ADDRESS);
-    // let mut display: Ssd1306Async<
-    //     I2CInterface<I2c<'static, Async>>,
-    //     DisplaySize128x64,
-    //     BufferedGraphicsModeAsync<DisplaySize128x64>,
-    // > = Ssd1306Async::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
-    //     .into_buffered_graphics_mode();
 
     let display = mk_static!(
         Ssd1306Async<
@@ -109,6 +169,11 @@ async fn main(spawner: Spawner) {
     static TEXT_STYLE: MonoTextStyle<'static, BinaryColor> = configure_text_style();
 
     // ********** DisplayData init ********** //
+    let temp_status_display = TemperatureLevelUnit {
+        msg: "Temp",
+        level: 0.0,
+        unit: "C",
+    };
     let wifi_status_display = WifiLevelUnit {
         msg: "Wifi",
         level: 0,
@@ -118,7 +183,11 @@ async fn main(spawner: Spawner) {
         MqttLevelUnit::new("MQTT client", CURRENT_MQTT.load(Ordering::Relaxed));
     let device_data = mk_static!(
         DisplayData,
-        DisplayData::new(wifi_status_display, mqtt_status_display)
+        DisplayData::new(
+            temp_status_display,
+            wifi_status_display,
+            mqtt_status_display
+        )
     );
     info!("Initialized display device, spawning task with ~5s refresh.");
     spawner
@@ -201,6 +270,11 @@ async fn main(spawner: Spawner) {
     loop {
         mqtt_ticker.next().await;
 
+        // FIX: SHARE i2c mutex with the temperature read function and the dispaly task
+
+        // HACK: Get a rand reading from the time clock
+        let temp = read_temperature_hack();
+
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
@@ -267,7 +341,7 @@ async fn main(spawner: Spawner) {
             },
         }
         // Get the MAC and make the topic from it
-        let topic = alloc::format!("/readings/gateway/{}", mac_addr_hex);
+        let gateway_topic = alloc::format!("/readings/gateway/{}", mac_addr_hex);
 
         // Get the rssi data from the gateway
         let raw_rssi = CURRENT_RSSI.load(Ordering::Relaxed);
@@ -276,28 +350,80 @@ async fn main(spawner: Spawner) {
         info!("Current rssi%: {}", rssi);
 
         // HACK: Create a simple timestamp using uptime, we format it in flask app for now
-        let uptime_ms = embassy_time::Instant::now().as_millis();
-        let mut data_str: String<128> = String::new(); // Increased size for JSON data
+        let mut uptime_ms = embassy_time::Instant::now().as_millis();
+        let mut gateway_data_str: String<128> = String::new();
 
         write!(
-            data_str,
+            gateway_data_str,
             "{{\"macAddress\":\"{}\", \"timestamp\":{}, \"rssi\":{:.2}}}",
             mac_addr_hex, uptime_ms, rssi
         )
         .expect("write! failed!");
-        info!("Publishing data: {}", data_str);
+        info!("Publishing data: {}", gateway_data_str);
 
         match client
             .send_message(
-                &topic,
-                data_str.as_bytes(),
+                &gateway_topic,
+                gateway_data_str.as_bytes(),
                 rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1,
                 true,
             )
             .await
         {
             Ok(()) => {
-                info!("Successfully sent payload to broker on topic={}", &topic)
+                info!(
+                    "Successfully sent payload to broker on topic={}",
+                    &gateway_topic
+                )
+            }
+            Err(mqtt_error) => match mqtt_error {
+                ReasonCode::NetworkError => {
+                    error!(
+                        "MQTT Network Error. Retrying in {}s",
+                        mqtt_poll_tick.as_secs()
+                    );
+                    CURRENT_MQTT.store(90, Ordering::Relaxed);
+                    continue;
+                }
+                _ => {
+                    error!(
+                        "Other MQTT Error: {:?}. Retrying in {}s",
+                        mqtt_error,
+                        mqtt_poll_tick.as_secs()
+                    );
+                    CURRENT_MQTT.store(90, Ordering::Relaxed);
+                    continue;
+                }
+            },
+        }
+
+        // HACK: FOR TEMP DATA FROM MESH
+        let mesh_sens1_mac = "40:91:51:CB:A4:64";
+        let mesh_sens1_topic = alloc::format!("/readings/temperature/{}", mesh_sens1_mac);
+        uptime_ms = embassy_time::Instant::now().as_millis();
+        let mut mesh_sens1_data_str: String<128> = String::new();
+        write!(
+            mesh_sens1_data_str,
+            "{{\"macAddress\":\"{}\", \"timestamp\":{}, \"temperature\":{:.2}}}",
+            mesh_sens1_mac, uptime_ms, temp
+        )
+        .expect("write! failed!");
+        info!("Publishing data: {}", mesh_sens1_data_str);
+
+        match client
+            .send_message(
+                &mesh_sens1_topic,
+                mesh_sens1_data_str.as_bytes(),
+                rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1,
+                true,
+            )
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    "Successfully sent payload to broker on topic={}",
+                    &gateway_topic
+                )
             }
             Err(mqtt_error) => match mqtt_error {
                 ReasonCode::NetworkError => {

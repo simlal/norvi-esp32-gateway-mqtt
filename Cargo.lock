@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "ads1x1x"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c907ad7732d7d83dafc84f0d9a0909072e86137de28aa97beeb421ef8b648c6"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "nb 1.1.0",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -869,9 +879,11 @@ dependencies = [
 name = "espnow-mesh-temp-monitoring-rs"
 version = "0.1.0"
 dependencies = [
+ "ads1x1x",
  "critical-section",
  "embassy-executor",
  "embassy-net",
+ "embassy-sync",
  "embassy-time",
  "embedded-graphics",
  "embedded-hal-async",
@@ -885,6 +897,7 @@ dependencies = [
  "esp-wifi",
  "heapless 0.8.0",
  "log",
+ "nb 1.1.0",
  "reqwless",
  "rust-mqtt",
  "smoltcp",

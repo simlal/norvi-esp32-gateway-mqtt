@@ -14,10 +14,80 @@ use heapless::String;
 use ssd1306::prelude::DisplaySize128x64;
 use ssd1306::{mode::BufferedGraphicsModeAsync, prelude::*, Ssd1306Async};
 
+use crate::common::temperature::{raw_voltage_to_temp, ESP32_TEMP1};
 use crate::common::wifi::{approx_rssi_to_percent, CURRENT_RSSI};
 
 const DISPLAY_FONT: MonoFont = ascii::FONT_5X8;
 pub static CURRENT_MQTT: AtomicU8 = AtomicU8::new(0); // init as offline=0
+
+// *** Temperature for display *** //
+
+pub trait FloatLevelUnit {
+    fn msg(&self) -> &'static str;
+    fn level(&self) -> f32;
+    fn unit(&self) -> &'static str;
+
+    // Max of 12 + 6 + 4 chars for level and unit
+    fn to_string(&self) -> String<24> {
+        let mut s = String::<24>::new();
+
+        // Manual formatting for floating point
+        let value = self.level();
+        let integer = value as i32;
+        let decimal = ((value - integer as f32).abs() * 10.0) as u32; // One decimal place
+
+        // Format message (12 chars max)
+        let msg = if self.msg().len() <= 12 {
+            self.msg()
+        } else {
+            &self.msg()[..12]
+        };
+
+        // Format unit (4 chars max)
+        let unit = if self.unit().len() <= 4 {
+            self.unit()
+        } else {
+            &self.unit()[..4]
+        };
+
+        // Avoid using floating point format specifiers
+        if value < 0.0 {
+            // Handle negative values
+            let _ = write!(&mut s, "{:12} -{}.{} {}", msg, integer.abs(), decimal, unit);
+        } else {
+            let _ = write!(&mut s, "{:12} {}.{} {}", msg, integer, decimal, unit);
+        }
+
+        s
+    }
+}
+
+pub struct TemperatureLevelUnit {
+    pub msg: &'static str,
+    pub level: f32,
+    pub unit: &'static str,
+}
+
+impl TemperatureLevelUnit {
+    pub fn new(msg: &'static str, level: f32, unit: &'static str) -> TemperatureLevelUnit {
+        TemperatureLevelUnit { msg, level, unit }
+    }
+    pub fn set_level(&mut self, level: f32) {
+        self.level = level;
+    }
+}
+
+impl FloatLevelUnit for TemperatureLevelUnit {
+    fn msg(&self) -> &'static str {
+        self.msg
+    }
+    fn level(&self) -> f32 {
+        self.level
+    }
+    fn unit(&self) -> &'static str {
+        self.unit
+    }
+}
 
 // *** Wifi for display *** //
 pub trait LevelUnit {
@@ -153,6 +223,7 @@ impl DurationExt for Duration {
 
 // *** DisplayData structure for OLED *** //
 pub struct DisplayData {
+    pub temperature: TemperatureLevelUnit,
     pub wifi: WifiLevelUnit,
     pub mqtt_client: MqttLevelUnit,
     pub last_update_time: Instant,
@@ -160,8 +231,13 @@ pub struct DisplayData {
 }
 
 impl DisplayData {
-    pub fn new(wifi: WifiLevelUnit, mqtt_client: MqttLevelUnit) -> DisplayData {
+    pub fn new(
+        temperature: TemperatureLevelUnit,
+        wifi: WifiLevelUnit,
+        mqtt_client: MqttLevelUnit,
+    ) -> DisplayData {
         DisplayData {
+            temperature,
             wifi,
             mqtt_client,
             last_update_time: Instant::now(),
@@ -203,14 +279,27 @@ pub async fn display_update_task(
             .draw(display)
             .unwrap();
 
+        // HACK: WILL NOT WORK FOR DIFF FONTS
         // Skip lines and display other data
         let font_height = &DISPLAY_FONT.character_size.height;
         let mut y: i32 = (*font_height * 2).try_into().unwrap();
 
+        // Display temperature data
+        dev_data.temperature.level = raw_voltage_to_temp(&ESP32_TEMP1);
+        let temperature_str = dev_data.temperature.to_string();
+        Text::with_baseline(
+            &temperature_str,
+            Point::new(0, y),
+            *text_style,
+            Baseline::Top,
+        )
+        .draw(display)
+        .unwrap();
+
         // Format and update device data
         dev_data.wifi.level = approx_rssi_to_percent(&CURRENT_RSSI);
         let wifi_status_str = dev_data.wifi.to_string();
-        // HACK: WILL NOT WORK FOR DIFF FONTS
+        y = (*font_height * 4).try_into().unwrap();
         Text::with_baseline(
             &wifi_status_str,
             Point::new(0, y),
@@ -224,7 +313,7 @@ pub async fn display_update_task(
             .mqtt_client
             .update_status(CURRENT_MQTT.load(Ordering::Relaxed));
         let mqtt_status_str = dev_data.mqtt_client.to_string();
-        y = (*font_height * 4).try_into().unwrap();
+        y = (*font_height * 6).try_into().unwrap();
         Text::with_baseline(
             &mqtt_status_str,
             Point::new(0, y),
@@ -234,7 +323,10 @@ pub async fn display_update_task(
         .draw(display)
         .unwrap();
 
-        display.flush().await.unwrap();
+        if let Err(e) = display.flush().await {
+            log::error!("Display flush error: {:?}", e);
+        }
+
         Timer::after_secs(5).await;
     }
 }

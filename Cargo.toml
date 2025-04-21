@@ -63,6 +63,9 @@ reqwless = { version = "0.13.0", default-features = false, features = [
   "embedded-tls",
 ] }
 rust-mqtt = { version = "0.3.0", default-features = false }
+ads1x1x = "0.3.0"
+nb = "1.1.0"
+embassy-sync = "0.6.2"
 
 [profile.dev]
 # Rust debug is too slow.
