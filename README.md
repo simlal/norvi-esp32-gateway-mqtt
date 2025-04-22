@@ -21,6 +21,14 @@ while retaining the performance and memory safety features of rust.
 
 Leveraging the connectivity capabilities of the ESP32, the project can be extended to include a mesh network of ESP32 devices that can send data to the gateway device using ESP-NOW protocol. The gateway device will then publish the data to the MQTT broker.
 
+### ⚠️ IMPORTANT (BUG FIX/HACK) ⚠️
+
+Sensor integration for the gateway was only started and not working because of the need to share the I2C bus between the OLED display and the sensors. The I2C bus is a shared bus, meaning that only one device can be connected to it at a time.
+
+Thus we need to actually share a mutex to the I2C modules between the display task and the create a new temperature task instead of in the main loop.
+
+In the meantime, a hack was added to generate random temperature based on system clock and still displaying and publishing the temperature to the broker with a fake MAC address.
+
 ## Hardware
 
 This project uses an ESP32-WROOM-based microcontroller with integrated OLED display (NORVII) as the central gateway, powered by a 12V DC supply through a custom PCB for power management and signal processing.
